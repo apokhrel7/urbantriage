@@ -206,8 +206,9 @@ export default function App() {
 
   // Auto-refresh every 30 seconds silently (no loading spinner, just background update)
   useEffect(() => {
-    if (transcriptRef.current) transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
-  }, [wordIndex]);
+    const id = setInterval(() => loadTickets(true), AUTO_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [loadTickets]);
 
   const isLive = phase === "calling" || phase === "processing";
 
