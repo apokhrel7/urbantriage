@@ -1,15 +1,15 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 // ============================================================
 //  DATABRICKS CONNECTION CONFIG
 // ============================================================
 const DATABRICKS_CONFIG = {
-  host:        "https://<your-workspace>.azuredatabricks.net",
-  warehouseId: "<your-sql-warehouse-id>",
-  token:       "<your-personal-access-token>",
-  catalog:     "hive_metastore",
+  host:        import.meta.env.VITE_DATABRICKS_HOST        ?? "",
+  warehouseId: import.meta.env.VITE_DATABRICKS_WAREHOUSE_ID ?? "",
+  token:       import.meta.env.VITE_DATABRICKS_TOKEN        ?? "",
+  catalog:     "workspace",
   schema:      "default",
-  table:       "311_enriched_tickets",
+  table:       "311_live_tickets",
 };
 
 // ============================================================
@@ -19,13 +19,12 @@ const DATABRICKS_CONFIG = {
 async function fetchTickets(limit = 20) {
   const sql = `
     SELECT
-      service_request_id, requested_date, status_description,
-      source, service_name, agency_responsible, address,
-      comm_name, latitude, longitude, transcription,
-      predicted_category, priority
+      ticket_id, created_at, transcription, primary_category,
+      secondary_category, priority, department_primary,
+      department_secondary, reasoning, suggested_response, status
     FROM ${DATABRICKS_CONFIG.catalog}.${DATABRICKS_CONFIG.schema}.${DATABRICKS_CONFIG.table}
-    WHERE status_description != 'Closed'
-    ORDER BY requested_date DESC
+    WHERE status != 'Closed'
+    ORDER BY created_at DESC
     LIMIT ${limit}
   `;
   const submitRes = await fetch(`${DATABRICKS_CONFIG.host}/api/2.0/sql/statements`, {
