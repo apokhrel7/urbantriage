@@ -13,10 +13,10 @@ const DATABRICKS_CONFIG = {
 };
 
 // ============================================================
-//  DATABRICKS FETCH — ready to wire up
+//  DATABRICKS FETCH
 //  Returns rows keyed by exact column names from the schema.
 // ============================================================
-async function fetchTickets(limit = 20) {
+async function fetchTickets(limit = 50) {
   const sql = `
     SELECT
       ticket_id, created_at, transcription, primary_category,
@@ -27,7 +27,9 @@ async function fetchTickets(limit = 20) {
     ORDER BY created_at DESC
     LIMIT ${limit}
   `;
-  const submitRes = await fetch(`${DATABRICKS_CONFIG.host}/api/2.0/sql/statements`, {
+  // Requests go through the Vite dev proxy (/api/databricks → Databricks host)
+  // to avoid CORS blocks on direct browser-to-Databricks calls.
+  const submitRes = await fetch(`/api/databricks/api/2.0/sql/statements`, {
     method: "POST",
     headers: { Authorization: `Bearer ${DATABRICKS_CONFIG.token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ warehouse_id: DATABRICKS_CONFIG.warehouseId, statement: sql, wait_timeout: "10s" }),
@@ -107,11 +109,23 @@ const PRIORITY_COLOR = { HIGH:"#ff3b3b", MEDIUM:"#ffaa00", MED:"#ffaa00", LOW:"#
 // ============================================================
 //  LEAFLET MAP COMPONENT — loads Leaflet from CDN
 // ============================================================
-function LeafletMap({ lat, lng, label, active }) {
-  const mapRef    = useRef(null);
+function LeafletMap({ lat, lng, label }) {
+  const mapRef     = useRef(null);
   const leafletRef = useRef(null);
   const markerRef  = useRef(null);
-  const mapId = useRef(`map-${Math.random().toString(36).slice(2)}`);
+  const mapId      = useRef(`map-${Math.random().toString(36).slice(2)}`);
+
+  const placeMarker = (L, map, latVal, lngVal, labelVal) => {
+    if (markerRef.current) { markerRef.current.remove(); markerRef.current = null; }
+    const icon = L.divIcon({
+      html: `<div style="width:13px;height:13px;background:#ff3b3b;border:2px solid #fff;border-radius:50%;box-shadow:0 0 10px #ff3b3b99;"></div>`,
+      iconSize: [13, 13], iconAnchor: [6, 6], className: "",
+    });
+    markerRef.current = L.marker([latVal, lngVal], { icon })
+      .addTo(map)
+      .bindPopup(`<b style="font-size:11px">${labelVal || "Incident"}</b>`, { maxWidth: 180 })
+      .openPopup();
+  };
 
   useEffect(() => {
     // Inject Leaflet CSS if not already present
