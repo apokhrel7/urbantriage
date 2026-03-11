@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 
 // ============================================================
 //  DATABRICKS CONNECTION CONFIG
+//  Values read from frontend/.env — requires VITE_ prefix
 // ============================================================
 const DATABRICKS_CONFIG = {
   host:        import.meta.env.VITE_DATABRICKS_HOST        ?? "",
@@ -37,7 +38,7 @@ async function fetchTickets(limit = 50) {
   let result = await submitRes.json();
   while (result.status?.state === "RUNNING" || result.status?.state === "PENDING") {
     await new Promise(r => setTimeout(r, 800));
-    const poll = await fetch(`${DATABRICKS_CONFIG.host}/api/2.0/sql/statements/${result.statement_id}`,
+    const poll = await fetch(`/api/databricks/api/2.0/sql/statements/${result.statement_id}`,
       { headers: { Authorization: `Bearer ${DATABRICKS_CONFIG.token}` } });
     result = await poll.json();
   }
@@ -46,65 +47,35 @@ async function fetchTickets(limit = 50) {
 }
 
 // ============================================================
-//  FIELD LABELS  —  exact column_name → "Display Name"
+//  CONSTANTS
 // ============================================================
 const FIELD_LABELS = {
-  service_request_id: "Request ID",
-  requested_date:     "Requested Date",
-  status_description: "Status",
-  source:             "Source",
-  service_name:       "Service Name",
-  agency_responsible: "Agency Responsible",
-  address:            "Address",
-  comm_name:          "Community",
-  latitude:           "Latitude",
-  longitude:          "Longitude",
-  transcription:      "Transcription",
-  predicted_category: "Predicted Category",
-  priority:           "Priority",
+  ticket_id:            "Ticket ID",
+  created_at:           "Created At",
+  status:               "Status",
+  primary_category:     "Primary Category",
+  secondary_category:   "Secondary Category",
+  priority:             "Priority",
+  department_primary:   "Primary Dept",
+  department_secondary: "Secondary Dept",
+  transcription:        "Transcription",
+  reasoning:            "Reasoning",
+  suggested_response:   "Suggested Response",
 };
 
-// ============================================================
-//  MOCK DATA — real rows from 311_enriched_tickets
-// ============================================================
-const ACTIVE_TICKET = {
-  service_request_id: "26-00152823",
-  requested_date:     "2026/03/10 12:00:00 AM",
-  status_description: "Open",
-  source:             "Other",
-  service_name:       "WATS - Sewage Back-up",
-  agency_responsible: "OS - Water Services",
-  address:            null,
-  comm_name:          "HILLHURST",
-  latitude:           51.05727753236,
-  longitude:          -114.09364601409,
-  transcription:      "Hi I am calling because I've got a pretty nasty sewage back-up in my basement in Hillhurst and I'm not sure what to do about it. There's water everywhere and it's really smelly, so I'm hoping someone can come take a look as soon as possible. I'm worried it might be a bigger issue with the sewer lines or something.",
-  predicted_category: "WATS - Sewage Back-up",
-  priority:           "HIGH",
-};
+const PRIORITY_COLOR = { HIGH: "#ff3b3b", MEDIUM: "#ffaa00", MED: "#ffaa00", LOW: "#00c896" };
 
-const INITIAL_QUEUE = [
-  { service_request_id:"26-00153435", service_name:"WATS - Sewage Back-up",        priority:"HIGH",   comm_name:"TARADALE",      requested_date:"14:18", status_description:"Open", latitude:51.11794, longitude:-113.93400 },
-  { service_request_id:"26-00151312", service_name:"Roads - Snow and Ice Control",  priority:"HIGH",   comm_name:"RICHMOND",      requested_date:"14:11", status_description:"Open", latitude:51.02971, longitude:-114.11842 },
-  { service_request_id:"26-00153629", service_name:"Corporate - Graffiti Concerns", priority:"MEDIUM", comm_name:"VARSITY",       requested_date:"13:57", status_description:"Open", latitude:51.09605, longitude:-114.16251 },
-  { service_request_id:"26-00151289", service_name:"Bylaw - Noise Concerns",        priority:"MEDIUM", comm_name:"TEMPLE",        requested_date:"13:44", status_description:"Open", latitude:51.08880, longitude:-113.94677 },
-  { service_request_id:"26-00153277", service_name:"WRS - Cart Management",         priority:"LOW",    comm_name:"HARVEST HILLS", requested_date:"13:31", status_description:"Open", latitude:51.14768, longitude:-114.05278 },
-];
+const AUTO_REFRESH_MS = 30_000;
 
-const TRANSCRIPT_WORDS = ACTIVE_TICKET.transcription.split(" ");
+// Hardcoded anchor: CITYSCAPE Community Centrepoint, Calgary
+const BASE_COORD = { lat: 51.14703155697, lng: -113.96125803148 };
 
-const REASONING_STEPS = [
-  { delay: 3000, text: `Keywords detected: "sewage back-up", "basement", "water everywhere"`,           status: "done"    },
-  { delay: 4000, text: `Predicted category → ${ACTIVE_TICKET.predicted_category}  ·  confidence 0.93`, status: "done"    },
-  { delay: 4900, text: `Community extracted: ${ACTIVE_TICKET.comm_name}`,                               status: "done"    },
-  { delay: 5700, text: `Geo coords: ${ACTIVE_TICKET.latitude.toFixed(4)}, ${ACTIVE_TICKET.longitude.toFixed(4)}`, status: "done" },
-  { delay: 6500, text: `MLflow priority model scoring…`,                                                status: "loading" },
-  { delay: 7800, text: `Priority → HIGH  ·  score 0.96  ·  18× baseline for area this week`,           status: "done"    },
-  { delay: 8500, text: `Agency routing → ${ACTIVE_TICKET.agency_responsible}`,                         status: "done"    },
-  { delay: 9200, text: `Agent auto-dispatched. Ticket active. Awaiting completion.`,                   status: "alert"   },
-];
-
-const PRIORITY_COLOR = { HIGH:"#ff3b3b", MEDIUM:"#ffaa00", MED:"#ffaa00", LOW:"#00c896" };
+// Spread tickets randomly within ~1.5 km of the anchor so the map feels alive
+function randomNearbyCoord() {
+  const angle = Math.random() * 2 * Math.PI;
+  const r     = Math.random() * 0.014; // ~0-1.5 km in degrees
+  return { lat: BASE_COORD.lat + r * Math.cos(angle), lng: BASE_COORD.lng + r * Math.sin(angle) };
+}
 
 // ============================================================
 //  LEAFLET MAP COMPONENT — loads Leaflet from CDN
@@ -128,7 +99,6 @@ function LeafletMap({ lat, lng, label }) {
   };
 
   useEffect(() => {
-    // Inject Leaflet CSS if not already present
     if (!document.getElementById("leaflet-css")) {
       const link = document.createElement("link");
       link.id   = "leaflet-css";
@@ -137,27 +107,18 @@ function LeafletMap({ lat, lng, label }) {
       document.head.appendChild(link);
     }
 
-    // Load Leaflet JS if not already loaded
     const initMap = () => {
       if (leafletRef.current) return;
       const L = window.L;
       if (!L) return;
-
       const map = L.map(mapId.current, { zoomControl: true, attributionControl: false });
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
       leafletRef.current = map;
-
-      if (active && lat && lng) {
+      if (lat && lng) {
         map.setView([lat, lng], 15);
-        const icon = L.divIcon({
-          html: `<div style="width:14px;height:14px;background:#ff3b3b;border:2px solid #fff;border-radius:50%;box-shadow:0 0 12px #ff3b3b99;"></div>`,
-          iconSize: [14, 14], iconAnchor: [7, 7], className: ""
-        });
-        markerRef.current = L.marker([lat, lng], { icon }).addTo(map)
-          .bindPopup(`<b style="font-size:11px">${label}</b><br/><span style="font-size:10px">${lat.toFixed(4)}, ${lng.toFixed(4)}</span>`, { maxWidth: 180 })
-          .openPopup();
+        placeMarker(L, map, lat, lng, label);
       } else {
-        map.setView([51.0447, -114.0719], 11); // Calgary center
+        map.setView([BASE_COORD.lat, BASE_COORD.lng], 13);
       }
     };
 
@@ -173,24 +134,22 @@ function LeafletMap({ lat, lng, label }) {
     return () => {
       if (leafletRef.current) { leafletRef.current.remove(); leafletRef.current = null; markerRef.current = null; }
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Update marker when ticket becomes active
+  // Fly to new location whenever the selected ticket changes
   useEffect(() => {
     const L = window.L;
     if (!L || !leafletRef.current) return;
-    if (active && lat && lng) {
-      leafletRef.current.setView([lat, lng], 15, { animate: true });
-      if (markerRef.current) markerRef.current.remove();
-      const icon = L.divIcon({
-        html: `<div style="width:14px;height:14px;background:#ff3b3b;border:2px solid #fff;border-radius:50%;box-shadow:0 0 12px #ff3b3b99;"></div>`,
-        iconSize: [14, 14], iconAnchor: [7, 7], className: ""
-      });
-      markerRef.current = L.marker([lat, lng], { icon }).addTo(leafletRef.current)
-        .bindPopup(`<b style="font-size:11px">${label}</b><br/><span style="font-size:10px">${lat.toFixed(4)}, ${lng.toFixed(4)}</span>`, { maxWidth: 180 })
-        .openPopup();
+    if (lat && lng) {
+      leafletRef.current.flyTo([lat, lng], 15, { animate: true, duration: 0.8 });
+      placeMarker(L, leafletRef.current, lat, lng, label);
+    } else {
+      if (markerRef.current) { markerRef.current.remove(); markerRef.current = null; }
+      leafletRef.current.flyTo([BASE_COORD.lat, BASE_COORD.lng], 13, { animate: true, duration: 0.8 });
     }
-  }, [active, lat, lng]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lat, lng]);
 
   return (
     <div id={mapId.current} ref={mapRef} style={{ width:"100%", height:"100%", background:"#0d1018" }} />
@@ -201,52 +160,51 @@ function LeafletMap({ lat, lng, label }) {
 //  MAIN COMPONENT
 // ============================================================
 export default function App() {
-  const [phase, setPhase]                   = useState("idle");
-  const [wordIndex, setWordIndex]           = useState(0);
-  const [reasoningSteps, setReasoningSteps] = useState([]);
-  const [ticketVisible, setTicketVisible]   = useState(false);
-  const [completed, setCompleted]           = useState(false);
-  const [elapsed, setElapsed]               = useState(0);
   const [clock, setClock]                   = useState(new Date());
-  const [queue, setQueue]                   = useState(INITIAL_QUEUE);
-  const timerRef      = useRef(null);
-  const transcriptRef = useRef(null);
+  const [queue, setQueue]                   = useState([]);
+  const [queueLoading, setQueueLoading]     = useState(true);
+  const [queueError, setQueueError]         = useState(null);
+  const [selectedTicket, setSelectedTicket] = useState(null);
+  const [refreshing, setRefreshing]         = useState(false);
+  const [lastRefreshed, setLastRefreshed]   = useState(null);
+  // Stable coordinate per ticket_id — generated once and reused across refreshes
+  const ticketCoordsRef = useRef(new Map());
+
+  const getCoord = useCallback((ticket_id) => {
+    if (!ticketCoordsRef.current.has(ticket_id)) {
+      ticketCoordsRef.current.set(ticket_id, randomNearbyCoord());
+    }
+    return ticketCoordsRef.current.get(ticket_id);
+  }, []);
 
   useEffect(() => {
     const id = setInterval(() => setClock(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
 
-  const startDemo = () => {
-    setPhase("calling"); setWordIndex(0); setReasoningSteps([]);
-    setTicketVisible(false); setCompleted(false); setElapsed(0);
-    timerRef.current = setInterval(() => setElapsed(e => e + 1), 1000);
+  const loadTickets = useCallback(async (silent = false) => {
+    if (!silent) setQueueLoading(true);
+    else setRefreshing(true);
+    try {
+      const rows = await fetchTickets(50);
+      setQueue(rows);
+      setQueueError(null);
+      setLastRefreshed(new Date());
+      // Keep selected ticket data fresh if it still exists in the new results
+      setSelectedTicket(prev =>
+        prev ? (rows.find(r => r.ticket_id === prev.ticket_id) ?? prev) : null
+      );
+    } catch (err) {
+      setQueueError(err.message);
+    } finally {
+      setQueueLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
 
-    let i = 0;
-    const wt = setInterval(() => {
-      i++; setWordIndex(i);
-      if (i >= TRANSCRIPT_WORDS.length) { clearInterval(wt); setPhase("processing"); }
-    }, 110);
+  useEffect(() => { loadTickets(false); }, [loadTickets]);
 
-    REASONING_STEPS.forEach((step, idx) => {
-      setTimeout(() => {
-        setReasoningSteps(prev => [...prev, { ...step, id: idx }]);
-        if (idx === REASONING_STEPS.length - 1)
-          setTimeout(() => { setTicketVisible(true); setPhase("ready"); clearInterval(timerRef.current); }, 500);
-      }, step.delay);
-    });
-  };
-
-  const handleComplete = () => {
-    setCompleted(true);
-    setTimeout(() => {
-      setPhase("idle"); setWordIndex(0); setReasoningSteps([]);
-      setTicketVisible(false); setCompleted(false); setElapsed(0);
-    }, 1800);
-  };
-
-  const completeQueueItem = (id) => setQueue(q => q.filter(t => t.service_request_id !== id));
-
+  // Auto-refresh every 30 seconds silently (no loading spinner, just background update)
   useEffect(() => {
     if (transcriptRef.current) transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
   }, [wordIndex]);
