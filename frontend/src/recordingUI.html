@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Calgary 311 AI Triage</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #0a0a0a;
+      color: #ffffff;
+      min-height: 100vh;
+      padding: 40px 20px;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+
+    .header h1 {
+      font-size: 2rem;
+      color: #ff6b35;
+      margin-bottom: 8px;
+    }
+
+    .header p { color: #888; font-size: 1rem; }
+
+    .container { max-width: 800px; margin: 0 auto; }
+
+    .record-section {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 16px;
+      padding: 32px;
+      text-align: center;
+      margin-bottom: 24px;
+    }
+
+    .record-btn {
+      width: 100px;
+      height: 100px;
+      border-radius: 50%;
+      border: none;
+      background: #ff6b35;
+      color: white;
+      font-size: 2.5rem;
+      cursor: pointer;
+      margin: 20px auto;
+      display: block;
+      transition: all 0.2s;
+    }
+
+    .record-btn.recording {
+      background: #ff0000;
+      animation: pulse 1s infinite;
+    }
+
+    @keyframes pulse {
+      0%   { transform: scale(1);    box-shadow: 0 0 0 0 rgba(255,0,0,0.4); }
+      70%  { transform: scale(1.05); box-shadow: 0 0 0 20px rgba(255,0,0,0); }
+      100% { transform: scale(1);    box-shadow: 0 0 0 0 rgba(255,0,0,0); }
+    }
+
+    .status { color: #888; font-size: 0.9rem; margin-top: 12px; min-height: 24px; }
+    .status.active { color: #ff6b35; }
+    .status.done   { color: #4caf50; }
+
+    .transcript-box {
+      background: #111;
+      border: 1px solid #333;
+      border-radius: 12px;
+      padding: 20px;
+      margin-top: 20px;
+      min-height: 80px;
+      font-size: 1rem;
+      line-height: 1.6;
+      color: #ddd;
+      text-align: left;
+    }
+
+    .transcript-box.empty { color: #444; font-style: italic; }
+
+    .triage-btn {
+      width: 100%;
+      padding: 16px;
+      background: #ff6b35;
+      color: white;
+      border: none;
+      border-radius: 12px;
+      font-size: 1.1rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 16px;
+      transition: background 0.2s;
+    }
+
+    .triage-btn:hover    { background: #e55a25; }
+    .triage-btn:disabled { background: #333; color: #666; cursor: not-allowed; }
+
+    .results-section { display: none; margin-top: 24px; }
+
+    .result-card {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 16px;
+    }
+
+    .result-card h3 {
+      color: #888;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+
+    .result-card .value { font-size: 1.2rem; font-weight: 600; color: #ffffff; }
+
+    .priority-HIGH   { color: #ff4444 !important; }
+    .priority-MEDIUM { color: #ff9800 !important; }
+    .priority-LOW    { color: #4caf50 !important; }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+    .reasoning-card {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 16px;
+    }
+
+    .reasoning-card h3 {
+      color: #888;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+
+    .reasoning-card p { color: #ccc; line-height: 1.6; }
+
+    .response-card {
+      background: #1a2a1a;
+      border: 1px solid #4caf50;
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 16px;
+    }
+
+    .response-card h3 {
+      color: #4caf50;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+
+    .response-card p { color: #ccc; line-height: 1.6; font-style: italic; }
+
+    .loader { text-align: center; padding: 40px; color: #888; display: none; }
+    .loader.active { display: block; }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid #333;
+      border-top-color: #ff6b35;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 16px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .error {
+      background: #2a1a1a;
+      border: 1px solid #ff4444;
+      border-radius: 12px;
+      padding: 16px;
+      color: #ff8888;
+      margin-top: 16px;
+      display: none;
+    }
+
+    .ticket-id {
+      color: #888;
+      font-size: 0.85rem;
+      text-align: center;
+      margin-top: 8px;
+      padding: 8px;
+      background: #111;
+      border-radius: 8px;
+    }
+
+    .saved-badge {
+      display: inline-block;
+      background: #1a2a1a;
+      border: 1px solid #4caf50;
+      color: #4caf50;
+      font-size: 0.75rem;
+      padding: 4px 10px;
+      border-radius: 20px;
+      margin-left: 8px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+
+  <div class="header">
+    <h1>🏙️ Calgary 311 AI Triage</h1>
+    <p>Speak your complaint — AI classifies, prioritizes, and routes in real time</p>
+  </div>
+
+  <!-- Record Section -->
+  <div class="record-section">
+    <p style="color:#aaa; margin-bottom:8px;">Press the button and speak your complaint</p>
+
+    <button class="record-btn" id="recordBtn">🎙️</button>
+
+    <div class="status" id="status">Tap the button to start recording</div>
+
+    <div class="transcript-box empty" id="transcriptBox">
+      Your words will appear here as you speak...
+    </div>
+
+    <button class="triage-btn" id="triageBtn" disabled>
+      ⚡ Run AI Triage
+    </button>
+  </div>
+
+  <!-- Loader -->
+  <div class="loader" id="loader">
+    <div class="spinner"></div>
+    <p>AI is analyzing the complaint...</p>
+  </div>
+
+  <!-- Error -->
+  <div class="error" id="errorBox"></div>
+
+  <!-- Results -->
+  <div class="results-section" id="results">
+
+    <div class="grid-2">
+      <div class="result-card">
+        <h3>🏷️ Primary Category</h3>
+        <div class="value" id="primaryCategory">—</div>
+      </div>
+      <div class="result-card">
+        <h3>📋 Secondary Issue</h3>
+        <div class="value" id="secondaryCategory">—</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="result-card">
+        <h3>🚨 Priority</h3>
+        <div class="value" id="priority">—</div>
+      </div>
+      <div class="result-card">
+        <h3>🏢 Primary Department</h3>
+        <div class="value" id="departmentPrimary">—</div>
+      </div>
+    </div>
+
+    <div class="result-card">
+      <h3>🏢 Secondary Department</h3>
+      <div class="value" id="departmentSecondary">—</div>
+    </div>
+
+    <div class="reasoning-card">
+      <h3>🧠 AI Reasoning</h3>
+      <p id="reasoning">—</p>
+    </div>
+
+    <div class="response-card">
+      <h3>💬 Suggested Agent Response — Read This to the Citizen</h3>
+      <p id="suggestedResponse">—</p>
+    </div>
+
+    <div class="ticket-id" id="ticketId"></div>
+
+  </div>
+
+</div>
+
+<script>
+  // ── YOUR DATABRICKS CREDENTIALS ───────────────────────────────────────────
+  const DATABRICKS_HOST  = "https://dbc-161a3af7-9a53.cloud.databricks.com";
+  const DATABRICKS_TOKEN = "YOUR_TOKEN_HERE";
+  const SQL_WAREHOUSE_ID = "796c21295dea4d00";
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const recordBtn     = document.getElementById('recordBtn');
+  const statusEl      = document.getElementById('status');
+  const transcriptBox = document.getElementById('transcriptBox');
+  const triageBtn     = document.getElementById('triageBtn');
+  const loader        = document.getElementById('loader');
+  const results       = document.getElementById('results');
+  const errorBox      = document.getElementById('errorBox');
+
+  let recognition;
+  let isRecording    = false;
+  let finalTranscript = '';
+
+  // ── Speech Recognition ────────────────────────────────────────────────────
+  function setupSpeechRecognition() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      showError("Speech recognition not supported. Use Chrome on desktop or Safari on iPhone.");
+      return null;
+    }
+
+    const rec          = new SpeechRecognition();
+    rec.continuous     = true;
+    rec.interimResults = true;
+    rec.lang           = 'en-CA';
+
+    rec.onresult = (event) => {
+      let interim = '';
+      finalTranscript = '';
+
+      for (let i = 0; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript + ' ';
+        } else {
+          interim += event.results[i][0].transcript;
+        }
+      }
+
+      transcriptBox.textContent = finalTranscript + interim;
+      transcriptBox.className   = 'transcript-box';
+    };
+
+    rec.onerror = (e) => {
+      showError(`Microphone error: ${e.error}. Please allow microphone access.`);
+      stopRecording();
+    };
+
+    rec.onend = () => {
+      if (isRecording) rec.start();
+    };
+
+    return rec;
+  }
+
+  function startRecording() {
+    recognition = setupSpeechRecognition();
+    if (!recognition) return;
+
+    finalTranscript             = '';
+    transcriptBox.textContent   = '';
+    transcriptBox.className     = 'transcript-box';
+    isRecording                 = true;
+
+    recognition.start();
+
+    recordBtn.textContent = '⏹️';
+    recordBtn.classList.add('recording');
+    statusEl.textContent  = 'Recording... tap again to stop';
+    statusEl.className    = 'status active';
+    triageBtn.disabled    = true;
+    results.style.display = 'none';
+    errorBox.style.display= 'none';
+  }
+
+  function stopRecording() {
+    isRecording = false;
+    if (recognition) recognition.stop();
+
+    recordBtn.textContent = '🎙️';
+    recordBtn.classList.remove('recording');
+
+    if (finalTranscript.trim()) {
+      statusEl.textContent = '✅ Recording complete — click Run AI Triage';
+      statusEl.className   = 'status done';
+      triageBtn.disabled   = false;
+    } else {
+      statusEl.textContent = 'Nothing detected — please try again';
+      statusEl.className   = 'status';
+    }
+  }
+
+  recordBtn.addEventListener('click', () => {
+    isRecording ? stopRecording() : startRecording();
+  });
+
+  // ── Run Triage via Databricks SQL API ─────────────────────────────────────
+  async function runTriage(complaint) {
+    const escaped = complaint.replace(/"/g, "'").replace(/\\/g, '\\\\');
+
+    const sql = `
+      SELECT ai_query(
+        'databricks-meta-llama-3-3-70b-instruct',
+        CONCAT(
+          'You are a Calgary 311 triage AI. ',
+          'A citizen just called and said: "${escaped}". ',
+          'This may be a multi-issue complaint. Analyze carefully and return a JSON object with exactly these fields: ',
+          'primary_category (pick one: Bylaw - Snow and Ice on Sidewalk, Roads - Snow and Ice Control, Corporate - Graffiti Concerns, Roads - Streetlight Maintenance, Roads - Roadway Maintenance, WATS - Sewage Back-up, Roads - Debris on Street/Sidewalk/Boulevard, AS - Animal at Large, Bylaw - Noise Concerns, WRS - Cart Management, Other), ',
+          'secondary_category (second issue if any, otherwise null), ',
+          'priority (HIGH or MEDIUM or LOW), ',
+          'department_primary (Calgary dept for primary issue), ',
+          'department_secondary (Calgary dept for secondary issue or null), ',
+          'reasoning (two sentences max), ',
+          'suggested_response (what the 311 agent should say back to the citizen). ',
+          'Return ONLY valid JSON, no other text, no markdown.'
+        )
+      ) AS triage_result
+    `;
+
+    const response = await fetch(
+      `${DATABRICKS_HOST}/api/2.0/sql/statements`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${DATABRICKS_TOKEN}`,
+          'Content-Type':  'application/json'
+        },
+        body: JSON.stringify({
+          warehouse_id:   SQL_WAREHOUSE_ID,
+          statement:      sql,
+          wait_timeout:   '30s'
+        })
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Databricks API error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+
+    if (data.status?.state === 'FAILED') {
+      throw new Error(data.status?.error?.message || 'Query failed');
+    }
+
+    const raw     = data.result?.data_array?.[0]?.[0];
+    if (!raw) throw new Error('No result returned from Databricks');
+
+    const cleaned = raw.replace(/```json|```/g, '').trim();
+    return JSON.parse(cleaned);
+  }
+
+  // ── Write Ticket Back to Delta Table ─────────────────────────────────────
+  async function writeTicket(complaint, triage, ticketId) {
+    const clean = (s) => s ? String(s).replace(/'/g, "''") : 'null';
+
+    const sql = `
+      INSERT INTO workspace.default.311_live_tickets VALUES (
+        '${ticketId}',
+        CURRENT_TIMESTAMP(),
+        '${clean(complaint)}',
+        '${clean(triage.primary_category)}',
+        '${clean(triage.secondary_category)}',
+        '${clean(triage.priority)}',
+        '${clean(triage.department_primary)}',
+        '${clean(triage.department_secondary)}',
+        '${clean(triage.reasoning)}',
+        '${clean(triage.suggested_response)}',
+        'Open'
+      )
+    `;
+
+    const response = await fetch(
+      `${DATABRICKS_HOST}/api/2.0/sql/statements`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${DATABRICKS_TOKEN}`,
+          'Content-Type':  'application/json'
+        },
+        body: JSON.stringify({
+          warehouse_id: SQL_WAREHOUSE_ID,
+          statement:    sql,
+          wait_timeout: '30s'
+        })
+      }
+    );
+
+    return response.ok;
+  }
+
+  // ── Display Results ───────────────────────────────────────────────────────
+  function displayResults(data, ticketId, saved) {
+    document.getElementById('primaryCategory').textContent    = data.primary_category    || '—';
+    document.getElementById('secondaryCategory').textContent  = data.secondary_category  || 'None detected';
+    document.getElementById('departmentPrimary').textContent  = data.department_primary  || '—';
+    document.getElementById('departmentSecondary').textContent= data.department_secondary || 'N/A';
+    document.getElementById('reasoning').textContent          = data.reasoning            || '—';
+    document.getElementById('suggestedResponse').textContent  = data.suggested_response   || '—';
+
+    const priorityEl       = document.getElementById('priority');
+    priorityEl.textContent = data.priority || '—';
+    priorityEl.className   = `value priority-${data.priority}`;
+
+    document.getElementById('ticketId').innerHTML =
+      `Ticket: <strong>${ticketId}</strong> — ${new Date().toLocaleTimeString()}` +
+      (saved ? ' <span class="saved-badge">✅ Saved to Databricks</span>' : '');
+
+    results.style.display = 'block';
+    results.scrollIntoView({ behavior: 'smooth' });
+  }
+
+  function showError(msg) {
+    errorBox.textContent   = `⚠️ ${msg}`;
+    errorBox.style.display = 'block';
+  }
+
+  // ── Triage Button ─────────────────────────────────────────────────────────
+  triageBtn.addEventListener('click', async () => {
+    const complaint = finalTranscript.trim();
+    if (!complaint) return;
+
+    loader.classList.add('active');
+    triageBtn.disabled     = true;
+    results.style.display  = 'none';
+    errorBox.style.display = 'none';
+
+    try {
+      const triageData = await runTriage(complaint);
+      const ticketId   = `SR-2026-${Math.floor(Math.random() * 90000 + 10000)}`;
+
+      // Write to Databricks
+      const saved = await writeTicket(complaint, triageData, ticketId);
+
+      // Show on screen
+      displayResults(triageData, ticketId, saved);
+
+    } catch (err) {
+      showError(err.message);
+      console.error(err);
+    } finally {
+      loader.classList.remove('active');
+      triageBtn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>
